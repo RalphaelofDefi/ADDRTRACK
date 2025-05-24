@@ -80,7 +80,7 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_contract = holder.get("isContract", False)
 #BELOW ADD in else for dolphin and wallet addy
             whale_emoji = " 🐋" if percentage > 1 else " 🐬"
-            contract_emoji = " 🏗️ This is a Contract address " if is_contract else " 💳 This is a wallet address"
+            contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
 
             line = (
                 f"{idx}. `{address}`\n"
