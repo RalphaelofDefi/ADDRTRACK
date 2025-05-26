@@ -1,111 +1,136 @@
 import os
-import requests
 import logging
+import requests
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from telegram.ext import MessageHandler, filters
-import re
+from telegram import Update, ParseMode
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-
-# Load environment variables
 load_dotenv()
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MORALIS_API_KEY = os.getenv("MORALIS_API_KEY")
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Helper to split long text into chunks under Telegram's limit
-def split_message(text, max_chars=4096):
-    chunks = []
-    while len(text) > max_chars:
-        split_index = text.rfind("\n", 0, max_chars)
-        if split_index == -1:
-            split_index = max_chars
-        chunks.append(text[:split_index])
-        text = text[split_index:]
-    chunks.append(text)
-    return chunks
-
-# Command handler for no /holders
-async def token_address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message_text = update.message.text.strip()
-
-    # Simple Solana address check (base58, usually 32-44 characters)
-    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", message_text):
-        return  # Ignore non-address messages
-
-    context.args = [message_text]
-    await holders(update, context)
-
-
-# Command handler for /holders
-async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Please provide a Solana token address. Usage: /holders <token_address>")
-        return
-
-    token_address = context.args[0]
-    url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/top-holders"
-
+async def fetch_token_metadata(address: str):
+    url = f"https://solana-gateway.moralis.io/token/mainnet/{address}/metadata"
     headers = {
-        "accept": "application/json",
+        "Accept": "application/json",
         "X-API-Key": MORALIS_API_KEY
     }
-
     try:
         response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            await update.message.reply_text("No record found.")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.warning(f"Metadata API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Metadata fetch error: {e}")
+        return None
+
+async def fetch_token_holders(address: str):
+    url = f"https://solana-gateway.moralis.io/token/mainnet/{address}/holders?limit=50"
+    headers = {
+        "Accept": "application/json",
+        "X-API-Key": MORALIS_API_KEY
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json().get("result", [])
+        else:
+            logger.warning(f"Holders API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Holders fetch error: {e}")
+        return None
+
+def is_valid_solana_address(address: str):
+    return len(address) in (32, 44) and address.isalnum()
+
+def format_links(links: dict) -> str:
+    icons = {
+        "twitter": "🐦",
+        "moralis": "🌐"
+    }
+    return "\n".join(f"{icons.get(k, '🔗')} {v}" for k, v in links.items())
+
+def format_metadata(metadata: dict) -> str:
+    name = metadata.get("name", "N/A")
+    symbol = metadata.get("symbol", "N/A")
+    logo = metadata.get("logo", "")
+    mc = metadata.get("fullyDilutedValue", "N/A")
+    links = metadata.get("links", {})
+    link_section = format_links(links)
+
+    result = f"<b>{name} ({symbol})</b>\n"
+    if logo:
+        result += f"<a href='{logo}'>🖼️ Logo</a>\n"
+    result += f"💰 <b>MC:</b> ${mc}\n"
+    if links:
+        result += link_section + "\n"
+    return result
+
+def format_holders(holders: list, total_supply: float, decimals: int) -> str:
+    lines = []
+    for i, holder in enumerate(holders, start=1):
+        address = holder.get("address", "")
+        balance = int(holder.get("amount", 0)) / (10 ** decimals)
+        usd_value = float(holder.get("valueUsd", 0.0))
+        percentage = (balance / total_supply) * 100 if total_supply else 0
+        is_contract = holder.get("isContract", False)
+        emoji = "🐋" if percentage >= 1 else ""
+        contract_flag = " [Contract]" if is_contract else ""
+        line = (
+            f"{i}. <code>{address}</code>\n"
+            f"   💵 ${usd_value:,.2f} | 🪙 {balance:.2f} | 📊 {percentage:.4f}% {emoji}{contract_flag}"
+        )
+        lines.append(line)
+
+    final = "\n\n".join(lines)
+    return final[:4000] if len(final) > 4000 else final  # Avoid Telegram message too long
+
+async def handle_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    address = update.message.text.strip()
+
+    if not is_valid_solana_address(address):
+        await update.message.reply_text("❌ Invalid Solana token address.")
+        return
+
+    try:
+        # Fetch metadata
+        metadata = await fetch_token_metadata(address)
+        if not metadata:
+            await update.message.reply_text("⚠️ No token metadata found.")
             return
 
-        data = response.json()
-        holders = data.get("result", [])
-        total_supply = float(data.get("totalSupply", 0))
+        decimals = int(metadata.get("decimals", 0))
+        total_supply = float(metadata.get("totalSupplyFormatted", 0.0))
 
+        meta_text = format_metadata(metadata)
+
+        # Fetch holders
+        holders = await fetch_token_holders(address)
         if not holders:
-            await update.message.reply_text("No record found.")
+            await update.message.reply_text("⚠️ No record found.")
             return
 
-        message_lines = []
-        for idx, holder in enumerate(holders[:50], start=1):
-            address = holder.get("ownerAddress", "N/A")
-            balance = float(holder.get("balanceFormatted", 0))
-            usd_value = float(holder.get("usdValue", 0))
-            percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
-            is_contract = holder.get("isContract", False)
-#BELOW ADD in else for dolphin and wallet addy
-            whale_emoji = " 🐋" if percentage > 1 else " 🐬"
-            contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
+        holders_text = format_holders(holders, total_supply, decimals)
 
-            line = (
-                f"{idx}. `{address}`\n"
-                f"   💰 Balance: {balance:,.2f}\n"
-                f"   💵 USD Value: ${usd_value:,.2f}\n"
-                f"   📊 Percentage: {percentage:.4f}%{whale_emoji}{contract_emoji}\n"
-            )
-            message_lines.append(line)
-
-        full_message = "\n".join(message_lines)
-
-        # Split into Telegram-safe chunks
-        for chunk in split_message(full_message):
-            await update.message.reply_text(chunk, parse_mode='Markdown')
+        full_message = meta_text + "\n\n<b>Top Holders:</b>\n\n" + holders_text
+        await update.message.reply_text(full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
 
     except Exception as e:
-        logging.error(f"Error fetching holders: {e}")
-        await update.message.reply_text("An error occurred while fetching data.")
+        logger.error(f"Error fetching holders: {e}")
+        await update.message.reply_text("❌ An error occurred while fetching data.")
 
-# Main function to start the bot
 def main():
-    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CommandHandler("holders", holders))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, token_address_handler))
-    application.run_polling()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_token))
+    logger.info("Bot is running...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
