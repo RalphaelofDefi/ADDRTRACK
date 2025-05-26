@@ -2,7 +2,8 @@ import os
 import logging
 import requests
 from dotenv import load_dotenv
-from telegram import Update, ParseMode
+from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 load_dotenv()
