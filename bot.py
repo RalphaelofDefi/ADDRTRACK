@@ -7,7 +7,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.ext import MessageHandler, filters
 import re
 
-
 # Load environment variables
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -41,8 +40,8 @@ async def token_address_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     context.args = [message_text]
     await holders(update, context)
-#METADATA
 
+# METADATA
 def fetch_token_metadata(token_address):
     url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/metadata"
     headers = {
@@ -58,8 +57,6 @@ def fetch_token_metadata(token_address):
         logging.error(f"Error fetching metadata: {e}")
         return None
 
-
-
 # Command handler for /holders
 async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -68,47 +65,44 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     token_address = context.args[0]
 
-
     # Fetch token metadata
-metadata = fetch_token_metadata(token_address)
-if metadata:
-    name = metadata.get("name", "N/A")
-    symbol = metadata.get("symbol", "N/A")
-    logo = metadata.get("logo", "")
-    market_cap = metadata.get("fullyDilutedValue", "N/A")
-    links = metadata.get("links", {})
+    metadata = fetch_token_metadata(token_address)
+    if metadata:
+        name = metadata.get("name", "N/A")
+        symbol = metadata.get("symbol", "N/A")
+        logo = metadata.get("logo", "")
+        market_cap = metadata.get("fullyDilutedValue", "N/A")
+        links = metadata.get("links", {})
 
-    # Build token info message
-    token_info = f"*Token Info*\n"
-    token_info += f"📛 *Name:* {name}\n"
-    token_info += f"🔠 *Symbol:* {symbol}\n"
-    token_info += f"💰 *Market Cap:* ${float(market_cap):,.2f}\n"
+        # Build token info message
+        token_info = f"*Token Info*\n"
+        token_info += f"📛 *Name:* {name}\n"
+        token_info += f"🔠 *Symbol:* {symbol}\n"
+        token_info += f"💰 *Market Cap:* ${float(market_cap):,.2f}\n"
 
-    # Build link section with icons
-    icons = {
-        "moralis": "🌐",
-        "website": "🌍",
-        "telegram": "📢",
-        "reddit": "🔴"
-    }
+        # Build link section with icons
+        icons = {
+            "moralis": "🌐",
+            "website": "🌍",
+            "telegram": "📢",
+            "reddit": "🔴"
+        }
 
-    link_text = ""
-    for key, icon in icons.items():
-        link = links.get(key)
-        if link:
-            link_text += f"{icon} [{key.capitalize()}]({link})\n"
+        link_text = ""
+        for key, icon in icons.items():
+            link = links.get(key)
+            if link:
+                link_text += f"{icon} [{key.capitalize()}]({link})\n"
 
-    # Send the logo image first
-    if logo:
-        await update.message.reply_photo(photo=logo)
+        # Send the logo image first
+        if logo:
+            await update.message.reply_photo(photo=logo)
 
-    # Send metadata info and links
-    await update.message.reply_text(token_info + link_text, parse_mode='Markdown')
-#--------------------------------------------------------------------------------------------
+        # Send metadata info and links
+        await update.message.reply_text(token_info + link_text, parse_mode='Markdown')
 
-
+    # Fetch top holders
     url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/top-holders"
-
     headers = {
         "accept": "application/json",
         "X-API-Key": MORALIS_API_KEY
@@ -135,7 +129,8 @@ if metadata:
             usd_value = float(holder.get("usdValue", 0))
             percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
             is_contract = holder.get("isContract", False)
-#BELOW ADD in else for dolphin and wallet addy
+
+            # Add in emoji for whale or dolphin, and contract indicator
             whale_emoji = " 🐋" if percentage > 1 else " 🐬"
             contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
 
