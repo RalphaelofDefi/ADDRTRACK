@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.ext import MessageHandler, filters
 import re
+from telegram.constants import ParseMode
 
 # Load environment variables
 load_dotenv()
@@ -188,11 +189,101 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error fetching holders: {e}")
         await update.message.reply_text("An error occurred while fetching data.")
 
+# /QUERY HANDLER-----------------------------------------------------------------------------
+
+MAX_ADDRESSES = 15
+
+async def query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+
+    if not args:
+        await update.message.reply_text("Usage: /query <token_address1> <token_address2> ... percent=<min_percent>")
+        return
+
+    # Extract minimum percentage (default: 1)
+    min_percent = 1.0
+    percent_args = [arg for arg in args if arg.startswith("percent=")]
+    if percent_args:
+        try:
+            min_percent = float(percent_args[0].split("=")[1])
+            args.remove(percent_args[0])
+        except ValueError:
+            await update.message.reply_text("Invalid percentage format. Use `percent=1`.")
+            return
+
+    # Filter and validate Solana addresses
+    token_addresses = [a for a in args if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", a)]
+    if not token_addresses or len(token_addresses) > MAX_ADDRESSES:
+        await update.message.reply_text(f"Send between 1 and {MAX_ADDRESSES} valid Solana token addresses.")
+        return
+
+    headers = {
+        "accept": "application/json",
+        "X-API-Key": MORALIS_API_KEY
+    }
+
+    combined_message = []
+
+    for token_address in token_addresses:
+        try:
+            url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/top-holders"
+            response = requests.get(url, headers=headers)
+
+            if response.status_code != 200:
+                combined_message.append(f"❌ `{token_address}`: No record found.\n")
+                continue
+
+            data = response.json()
+            holders = data.get("result", [])
+            total_supply = float(data.get("totalSupply", 0))
+
+            if not holders:
+                combined_message.append(f"❌ `{token_address}`: No holders found.\n")
+                continue
+
+            filtered = [
+                h for h in holders[:100]
+                if float(h.get("percentageRelativeToTotalSupply", 0)) >= min_percent
+            ]
+
+            if not filtered:
+                combined_message.append(f"⚠️ `{token_address}`: No holders above {min_percent}%.\n")
+                continue
+
+            combined_message.append(f"🔹 Top Holders of `{token_address}` with ≥ {min_percent}%:\n")
+
+            for idx, holder in enumerate(filtered[:50], start=1):
+                address = holder.get("ownerAddress", "N/A")
+                balance = float(holder.get("balanceFormatted", 0))
+                usd_value = float(holder.get("usdValue", 0))
+                percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
+                is_contract = holder.get("isContract", False)
+
+                whale_emoji = " 🐋" if percentage > 1 else " 🐬"
+                contract_note = " 🏗️ Contract" if is_contract else ""
+
+                combined_message.append(
+                    f"{idx}. `{address}`\n"
+                    f"   💰 {balance:,.2f}   💵 ${usd_value:,.2f}   📊 {percentage:.2f}%{whale_emoji} {contract_note}"
+                )
+
+            combined_message.append("")  # Separator
+
+        except Exception as e:
+            logging.error(f"Error in /query for {token_address}: {e}")
+            combined_message.append(f"❌ `{token_address}`: Error fetching data.\n")
+
+    # Send result in safe Telegram chunks
+    for chunk in split_message("\n".join(combined_message)):
+        await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+
+#---------------------------------------------------------------------------------------------
 # Main function to start the bot
 def main():
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("holders", holders))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, token_address_handler))
+    application.add_handler(CommandHandler("query", query))
     application.run_polling()
 
 if __name__ == "__main__":
