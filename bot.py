@@ -1,3 +1,5 @@
+#USER SHOULD BE ABLE TO SEND MULTIPLE ADDRESS AND RETRIEVE HOLDER THAT ASSOCIATED WITH THOSE ACCOUNT
+
 import os
 import requests
 import logging
@@ -35,11 +37,32 @@ async def token_address_handler(update: Update, context: ContextTypes.DEFAULT_TY
     message_text = update.message.text.strip()
 
     # Simple Solana address check (base58, usually 32-44 characters)
-    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", message_text):
-        return  # Ignore non-address messages
+    matches = re.findall(r"[1-9A-HJ-NP-Za-km-z]{32,44}", message_text)
+    if not matches:
+        return  # Ignore if no address
 
-    context.args = [message_text]
+    address = matches[0]
+    tokens = message_text.split()
+
+    count = 50  # default
+    percent = 0.0  # default
+
+    if len(tokens) > 1:
+        try:
+            count = int(tokens[1])
+            count = max(1, min(count, 100))
+        except:
+            pass
+
+    if len(tokens) > 2:
+        try:
+            percent = float(tokens[2])
+        except:
+            pass
+
+    context.args = [address, str(count), str(percent)]
     await holders(update, context)
+
 
 # METADATA
 def fetch_token_metadata(token_address):
@@ -60,10 +83,21 @@ def fetch_token_metadata(token_address):
 # Command handler for /holders
 async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Please provide a Solana token address. Usage: /holders <token_address>")
+        await update.message.reply_text("Please provide a Solana token address. Usage: /holders <address> [count] [%min]")
         return
 
     token_address = context.args[0]
+    try:
+        count = int(context.args[1]) if len(context.args) > 1 else 50
+        count = max(1, min(count, 100))
+    except:
+        count = 50
+
+    try:
+        percent_min = float(context.args[2]) if len(context.args) > 2 else 0.0
+    except:
+        percent_min = 0.0
+
 
     # Fetch token metadata
     metadata = fetch_token_metadata(token_address)
@@ -122,25 +156,31 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("No record found.")
             return
 
-        message_lines = []
-        for idx, holder in enumerate(holders[:50], start=1):
-            address = holder.get("ownerAddress", "N/A")
-            balance = float(holder.get("balanceFormatted", 0))
-            usd_value = float(holder.get("usdValue", 0))
-            percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
-            is_contract = holder.get("isContract", False)
+            message_lines = []
+    shown = 0
+    for idx, holder in enumerate(holders):
+        percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
+        if percentage < percent_min:
+            continue
+        if shown >= count:
+            break
 
-            # Add in emoji for whale or dolphin, and contract indicator
-            whale_emoji = " 🐋" if percentage > 1 else " 🐬"
-            contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
+        address = holder.get("ownerAddress", "N/A")
+        balance = float(holder.get("balanceFormatted", 0))
+        usd_value = float(holder.get("usdValue", 0))
+        is_contract = holder.get("isContract", False)
 
-            line = (
-                f"{idx}. `{address}`\n"
-                f"   💰 Balance: {balance:,.2f}\n"
-                f"   💵 USD Value: ${usd_value:,.2f}\n"
-                f"   📊 Percentage: {percentage:.4f}%{whale_emoji}{contract_emoji}\n"
-            )
-            message_lines.append(line)
+        whale_emoji = " 🐋" if percentage > 1 else " 🐬"
+        contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
+
+        line = (
+            f"{shown + 1}. `{address}`\n"
+            f"   💰 Balance: {balance:,.2f}\n"
+            f"   💵 USD Value: ${usd_value:,.2f}\n"
+            f"   📊 Percentage: {percentage:.4f}%{whale_emoji}{contract_emoji}\n"
+        )
+        message_lines.append(line)
+        shown += 1
 
         full_message = "\n".join(message_lines)
 
