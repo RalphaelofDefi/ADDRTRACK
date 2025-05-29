@@ -1,5 +1,3 @@
-#USER SHOULD BE ABLE TO SEND MULTIPLE ADDRESS AND RETRIEVE HOLDER THAT ASSOCIATED WITH THOSE ACCOUNT
-
 import os
 import requests
 import logging
@@ -63,7 +61,6 @@ async def token_address_handler(update: Update, context: ContextTypes.DEFAULT_TY
     context.args = [address, str(count), str(percent)]
     await holders(update, context)
 
-
 # METADATA
 def fetch_token_metadata(token_address):
     url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/metadata"
@@ -97,7 +94,6 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         percent_min = float(context.args[2]) if len(context.args) > 2 else 0.0
     except:
         percent_min = 0.0
-
 
     # Fetch token metadata
     metadata = fetch_token_metadata(token_address)
@@ -156,31 +152,31 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("No record found.")
             return
 
-            message_lines = []
-    shown = 0
-    for idx, holder in enumerate(holders):
-        percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
-        if percentage < percent_min:
-            continue
-        if shown >= count:
-            break
+        message_lines = []
+        shown = 0
+        for idx, holder in enumerate(holders):
+            percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
+            if percentage < percent_min:
+                continue
+            if shown >= count:
+                break
 
-        address = holder.get("ownerAddress", "N/A")
-        balance = float(holder.get("balanceFormatted", 0))
-        usd_value = float(holder.get("usdValue", 0))
-        is_contract = holder.get("isContract", False)
+            address = holder.get("ownerAddress", "N/A")
+            balance = float(holder.get("balanceFormatted", 0))
+            usd_value = float(holder.get("usdValue", 0))
+            is_contract = holder.get("isContract", False)
 
-        whale_emoji = " 🐋" if percentage > 1 else " 🐬"
-        contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
+            whale_emoji = " 🐋" if percentage > 1 else " 🐬"
+            contract_emoji = " 🏗️ This is a Contract address " if is_contract else ""
 
-        line = (
-            f"{shown + 1}. `{address}`\n"
-            f"   💰 Balance: {balance:,.2f}\n"
-            f"   💵 USD Value: ${usd_value:,.2f}\n"
-            f"   📊 Percentage: {percentage:.4f}%{whale_emoji}{contract_emoji}\n"
-        )
-        message_lines.append(line)
-        shown += 1
+            line = (
+                f"{shown + 1}. `{address}`\n"
+                f"   💰 Balance: {balance:,.2f}\n"
+                f"   💵 USD Value: ${usd_value:,.2f}\n"
+                f"   📊 Percentage: {percentage:.4f}%{whale_emoji}{contract_emoji}\n"
+            )
+            message_lines.append(line)
+            shown += 1
 
         full_message = "\n".join(message_lines)
 
