@@ -7,6 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.ext import MessageHandler, filters
 import re
 from telegram.constants import ParseMode
+from collections import Counter
 
 # Load environment variables
 load_dotenv()
@@ -277,13 +278,78 @@ async def query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for chunk in split_message("\n".join(combined_message)):
         await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
 
-#---------------------------------------------------------------------------------------------
+#------------------------------/FIND COMMAND---------------------------------------------------------------
+
+async def find_common_holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+
+    if len(args) < 3:
+        await update.message.reply_text("Usage: /find <threshold_percent> <token1> <token2> ... <tokenN> (max 15 tokens)")
+        return
+
+    try:
+        threshold = float(args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid threshold. It must be a number (e.g., 5 for 5%).")
+        return
+
+    token_addresses = args[1:]
+    if not (2 <= len(token_addresses) <= 15):
+        await update.message.reply_text("Please provide between 2 to 15 token addresses.")
+        return
+
+    headers = {
+        "accept": "application/json",
+        "X-API-Key": MORALIS_API_KEY
+    }
+
+    holders_list = []
+
+    for token in token_addresses:
+        url = f"https://solana-gateway.moralis.io/token/mainnet/{token}/top-holders"
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                await update.message.reply_text(f"Error fetching holders for {token}")
+                return
+            data = response.json().get("result", [])
+            holders = {
+                holder["ownerAddress"]
+                for holder in data
+                if float(holder.get("percentageRelativeToTotalSupply", 0)) >= threshold
+            }
+            holders_list.append(holders)
+
+        except Exception as e:
+            logging.error(f"Error with {token}: {e}")
+            await update.message.reply_text(f"An error occurred with token: {token}")
+            return
+
+    # Intersect all sets to find common holders
+    if not holders_list:
+        await update.message.reply_text("No holders found.")
+        return
+
+    common = set.intersection(*holders_list)
+    if not common:
+        await update.message.reply_text("No wallets found that meet the criteria across all tokens.")
+        return
+
+    wallet_lines = [f"`{wallet}`" for wallet in common]
+    full_msg = "🔍 Wallets holding all tokens with at least " + f"{threshold}%:\n\n" + "\n".join(wallet_lines)
+
+    for chunk in split_message(full_msg):
+        await update.message.reply_text(chunk, parse_mode='Markdown')
+
+
+#----------------------------------------------------------------------------------------------
 # Main function to start the bot
 def main():
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("holders", holders))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, token_address_handler))
     application.add_handler(CommandHandler("query", query))
+    application.add_handler(CommandHandler("find", find_common_holders))
     application.run_polling()
 
 if __name__ == "__main__":
