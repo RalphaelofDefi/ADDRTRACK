@@ -283,20 +283,26 @@ async def query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def find_common_holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
 
-    if len(args) < 3:
-        await update.message.reply_text("Usage: /find <threshold_percent> <token1> <token2> ... <tokenN> (max 15 tokens)")
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /find [threshold_percent] <token1> <token2> ... <tokenN> (2–15 tokens)")
         return
 
+    # Default threshold
+    threshold = 1.0
+
+    # Check if the first argument is a percentage
     try:
-        threshold = float(args[0])
+        first_arg = float(args[0])
+        threshold = first_arg
+        token_addresses = args[1:]
     except ValueError:
-        await update.message.reply_text("Invalid threshold. It must be a number (e.g., 5 for 5%).")
-        return
+        # No threshold provided
+        token_addresses = args
 
-    token_addresses = args[1:]
     if not (2 <= len(token_addresses) <= 15):
         await update.message.reply_text("Please provide between 2 to 15 token addresses.")
         return
+
 
     headers = {
         "accept": "application/json",
