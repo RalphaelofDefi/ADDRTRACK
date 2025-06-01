@@ -288,7 +288,7 @@ async def find_common_holders(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Default threshold
-    threshold = 1.0
+    threshold = 0.0000000000001
 
     # Check if the first argument is a percentage
     try:
