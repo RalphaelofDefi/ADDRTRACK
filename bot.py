@@ -181,56 +181,79 @@ async def holders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- /query ---
 async def query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /query <address1> <address2> ... <min_percentage>")
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /query <percentage?> <address1> <address2> ... (up to 15)")
         return
 
-    *addresses, min_percent_str = context.args
+    # Check if first arg is a percentage
     try:
-        min_percent = float(min_percent_str)
-    except:
-        await update.message.reply_text("Invalid percentage.")
+        min_percent = float(args[0])
+        addresses = args[1:]
+    except ValueError:
+        min_percent = 0.0
+        addresses = args
+
+    if len(addresses) < 2 or len(addresses) > 15:
+        await update.message.reply_text("Please provide between 2 and 15 token addresses.")
         return
 
     all_holders = {}
+    token_map = {}
     symbol_list = []
 
     for token_address in addresses:
         metadata = fetch_token_metadata(token_address)
         symbol = metadata.get("symbol", token_address[:4]).replace("/", "_") if metadata else token_address[:4]
         symbol_list.append(symbol)
+
         url = f"https://solana-gateway.moralis.io/token/mainnet/{token_address}/top-holders"
         headers = {
             "accept": "application/json",
             "X-API-Key": MORALIS_API_KEY
         }
+
         try:
             response = requests.get(url, headers=headers)
             if response.status_code != 200:
                 continue
+
             data = response.json()
             for holder in data.get("result", []):
-                pct = float(holder.get("percentageRelativeToTotalSupply", 0))
-                if pct < min_percent:
+                percentage = float(holder.get("percentageRelativeToTotalSupply", 0))
+                if percentage < min_percent:
                     continue
-                addr = holder.get("ownerAddress")
-                if addr:
-                    all_holders.setdefault(addr, []).append(token_address)
+
+                wallet = holder.get("ownerAddress")
+                if wallet:
+                    all_holders.setdefault(wallet, set()).add(token_address)
+                    token_map.setdefault(wallet, []).append({
+                        "token": symbol,
+                        "percentage": percentage
+                    })
         except Exception as e:
             logging.error(f"Query fetch error for {token_address}: {e}")
 
-    result = [addr for addr, tokens in all_holders.items() if len(tokens) == len(addresses)]
-
-    if not result:
-        await update.message.reply_text("No wallets found holding all tokens at the specified percentage.")
+    if not all_holders:
+        await update.message.reply_text("No record found.")
         return
 
-    symbol_filename = "_".join(symbol_list[:5])
-    csv_path = generate_csv(symbol_filename, [[i+1, addr] for i, addr in enumerate(result)], ["Rank", "Wallet Address"])
+    # Prepare result text & CSV
+    result_lines = []
+    csv_rows = [["Rank", "Wallet Address", "Token Holdings"]]
+    for idx, (wallet, tokens) in enumerate(sorted(all_holders.items(), key=lambda x: -len(x[1]))[:100], start=1):
+        token_info = ", ".join([f"{entry['token']} ({entry['percentage']:.2f}%)" for entry in token_map[wallet]])
+        result_lines.append(f"{idx}. `{wallet}`\n   📊 {token_info}")
+        csv_rows.append([idx, wallet, token_info])
 
-    preview = "\n".join([f"{i+1}. `{addr}`" for i, addr in enumerate(result[:30])])
-    await update.message.reply_text(preview, parse_mode='Markdown')
+    text_preview = "\n".join(result_lines[:30])
+    await update.message.reply_text(text_preview, parse_mode='Markdown')
+
+    # Send CSV
+    symbol_filename = "_".join(symbol_list[:5])
+    csv_path = generate_csv(symbol_filename, csv_rows[1:], csv_rows[0])
     await update.message.reply_document(document=open(csv_path, "rb"), filename=os.path.basename(csv_path))
+
 
 # --- /find ---
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
